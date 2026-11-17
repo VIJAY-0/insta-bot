@@ -1,0 +1,33 @@
+# Instagram accounts the bot works with.
+# Copy this file to accounts.toml and fill it in. accounts.toml holds access tokens:
+# keep it private (it is git-ignored).
+#
+# Each [accounts.<name>] block is one Instagram account. The account that RECEIVES a DM
+# is the one that POSTS the reel and replies. <name> is only a label for the log.
+# The bot reloads this file when you save it, so no restart is needed.
+
+[accounts.my_account]
+# Instagram account ID (starts with 1784). Don't know it? DM the account: the bot log
+# prints "DM to Instagram account 1784..., which is not in accounts.toml".
+ig_account_id = "17840000000000000"
+
+# Token that can manage this account: a system user token (EAA...) or an Instagram
+# Login token (IGAA...). Needs instagram_basic, instagram_content_publish and
+# instagram_manage_messages. Several accounts may share one token.
+access_token = "PASTE_TOKEN_HERE"
+
+# Who may DM reels to this account. A person has a DIFFERENT sender ID on each account,
+# so use the ID the log shows for this account: "Ignoring DM to [my_account] from sender ...".
+# ["*"] allows anyone (not recommended).
+allowed_senders = ["1350000000000000"]
+
+# Optional:
+# enabled = false   # ignore DMs to this account
+# dry_run = true    # download and reply, but don't post (overrides DRY_RUN in .env)
+
+
+# Add more accounts the same way:
+# [accounts.second_account]
+# ig_account_id = "1784..."
+# access_token = "EAA..."
+# allowed_senders = ["..."]

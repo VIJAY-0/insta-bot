@@ -37,17 +37,6 @@ class InstagramAPI:
             raise InstagramError(f"{message} (HTTP {resp.status_code}, code {err.get('code')})")
         return data
 
-    def find_account_id(self) -> str | None:
-        """The Instagram professional account ID this token acts for, if the token can tell us."""
-        if self.instagram_login:
-            me = self._request("GET", "me", params={"fields": "user_id"})
-            return str(me.get("user_id") or me["id"])
-        pages = self._request("GET", "me/accounts", params={"fields": "instagram_business_account"})
-        for page in pages.get("data", []):
-            if page.get("instagram_business_account"):
-                return str(page["instagram_business_account"]["id"])
-        return None  # e.g. a system user without Pages: set IG_ACCOUNT_ID or learn it from a webhook
-
     def username(self, ig_id: str) -> str | None:
         return self._request("GET", ig_id, params={"fields": "username"}).get("username")
 

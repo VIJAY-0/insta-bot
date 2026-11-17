@@ -1,45 +1,59 @@
 # Instagram DM → Reel bot
 
-DM your Instagram account a reel link (or share a reel to it). The bot downloads the video,
-publishes it as a Reel on the account, and replies in the DM with the post link.
+DM one of your Instagram accounts a reel link (or share a reel to it). The bot downloads the
+video, publishes it as a Reel on **the account that received the DM**, and replies with the link.
 
 - `app.py` – webhook server, job queue, publishing flow (original prototype kept as `app_prototype.py`)
+- `accounts.py` – loads and validates `accounts.toml`, reloads it when it changes
 - `downloader.py` – downloads reels with yt-dlp, or shared videos by direct URL
 - `instagram_api.py` – Graph API calls (send DM, create container, wait, publish)
 - `insta_reel_downloader.py` – standalone command-line downloader, not needed by the bot:
   `python insta_reel_downloader.py "<reel link>"`
 
+## Configuration
+
+| File | What goes in it | In git? |
+|---|---|---|
+| `.env` | Server settings: `PUBLIC_URL`, `APP_SECRET`, `VERIFY_TOKEN`, `DRY_RUN`, `PORT` | No (template: `.env.example`) |
+| `accounts.toml` | One block per Instagram account: ID, token, allowed senders | No (template: `accounts.example.toml`) |
+
+```toml
+[accounts.gta6ontape]
+ig_account_id = "17841426634636903"
+access_token = "EAA..."
+allowed_senders = ["1352797710166784"]
+# enabled = false   # ignore this account
+# dry_run = true    # don't post for this account
+```
+
+The bot reloads `accounts.toml` when you save it. Changes to `.env` need a restart.
+
 ## Setup
 
 1. **Install:** `pip install -r requirements.txt`
-
-2. **Meta app** (developers.facebook.com → your app → Instagram → *API setup with Instagram login*):
-   - The Instagram account must be a **professional** account (Business or Creator).
-   - Permissions: `instagram_business_basic`, `instagram_business_manage_messages`,
-     `instagram_business_content_publish`.
-   - Put the access token in `.env` as `ACCESS_TOKEN`. A system user token (EAA...) never
-     expires; an Instagram Login token (IGAA...) lasts 60 days.
-   - Put the app secret in `.env` as `APP_SECRET`.
-   - `IG_ACCOUNT_ID`: if the token can't reveal it, the bot logs it from the first DM; paste it in.
-
-3. **Public URL:** point a public HTTPS address at this machine's port 5000 and set
-   `PUBLIC_URL=https://your-domain` in `.env` (no trailing slash). Instagram downloads the video
-   from `PUBLIC_URL/media/...` when publishing.
-
-4. **Webhook** (same Meta page → *Configure webhooks*):
-   - Callback URL: `PUBLIC_URL/webhook` · Verify token: value of `VERIFY_TOKEN` (`omvrti123`)
+2. **Meta app** (developers.facebook.com → your app → Use cases → Instagram API):
+   - Each Instagram account must be a **professional** account.
+   - Permissions: `instagram_basic`, `instagram_content_publish`, `instagram_manage_messages`.
+   - Token: a system user token (EAA…, never expires) that has the Instagram account assigned
+     in Business settings, or an Instagram Login token (IGAA…, lasts 60 days).
+3. **Public URL:** point a public HTTPS address at this machine's `PORT` and set `PUBLIC_URL`.
+   Instagram downloads the video from `PUBLIC_URL/media/...` when publishing.
+4. **Webhook** (Use cases → Instagram API → API setup):
+   - Callback URL: `PUBLIC_URL/webhook`, verify token: `VERIFY_TOKEN` from `.env`.
    - Subscribe to the **messages** field.
-   - In Development mode Meta only delivers DMs from accounts with a role on the app
-     (add them as Instagram testers) — or switch the app to Live.
+   - On each Instagram account: Settings → Messages and story replies → Message controls →
+     **Allow access to messages**.
+   - In Development mode Meta only delivers DMs from accounts with a role on the app.
+5. **Run:** `python app.py` (or double-click `run_bot.bat`). The startup log checks every account.
 
-5. **Run:** `python app.py`. The startup log checks the token, publish permission and PUBLIC_URL.
+## Adding an account or a sender
 
-6. **Allow senders:** DM the account from your personal Instagram. The log prints
-   `Ignoring DM from sender 1234567890...` → put that ID in `ALLOWED_SENDER_IDS` (comma-separate
-   several) and restart. Only these accounts can trigger posts.
-
-7. **Test, then go live:** with `DRY_RUN=true` the bot downloads and replies but doesn't post.
-   When that works, set `DRY_RUN=false` and restart.
+1. DM the account from the sender's Instagram.
+2. The log shows one of:
+   - `DM to Instagram account 1784..., which is not in accounts.toml` → add an
+     `[accounts.<name>]` block with that `ig_account_id` and a token that can manage it.
+   - `Ignoring DM to [name] from sender 135...` → add that ID to the account's `allowed_senders`.
+3. Save `accounts.toml`. A person's sender ID is different on every account.
 
 ## Using it
 

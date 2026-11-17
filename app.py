@@ -1,10 +1,12 @@
 """
-Instagram DM -> Reel reposting bot (Meta Graph API, Instagram Login).
+Instagram DM -> Reel reposting bot (Meta Graph API).
 
-When an allowed user DMs your Instagram account a reel link (or shares a reel with it):
+Accounts are configured in accounts.toml. When an allowed sender DMs one of those accounts
+a reel link (or shares a reel with it):
   1. the Messaging webhook delivers the DM here,
   2. the video is downloaded,
-  3. it is published as a Reel on your account (Instagram fetches it from PUBLIC_URL/media/...),
+  3. it is published as a Reel on the account that received the DM
+     (Instagram fetches the file from PUBLIC_URL/media/...),
   4. the sender gets a DM reply with the result.
 
 Run:  python app.py        Setup: see README.md
@@ -17,6 +19,7 @@ import logging
 import os
 import queue
 import secrets
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -27,22 +30,22 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request, send_file
 
+from accounts import Account, AccountStore, ConfigError
 from downloader import DownloadError, download, find_instagram_url
-from instagram_api import InstagramAPI, InstagramError
+from instagram_api import InstagramError
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-ACCESS_TOKEN = (os.getenv("ACCESS_TOKEN") or os.getenv("ACCOUNT_TOKEN") or "").strip()
-IG_ACCOUNT_ID = os.getenv("IG_ACCOUNT_ID", "").strip()  # optional; found automatically if possible
+# Server-wide settings (.env). Per-account settings live in accounts.toml.
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "omvrti123")
 APP_SECRET = os.getenv("APP_SECRET", "").strip()
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip().rstrip("/")
-ALLOWED_SENDER_IDS = {s.strip() for s in os.getenv("ALLOWED_SENDER_IDS", "").split(",") if s.strip()}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in ("1", "true", "yes")
 API_VERSION = os.getenv("GRAPH_API_VERSION", "v27.0")
 COOKIES_FILE = os.getenv("INSTAGRAM_COOKIES_FILE", "").strip() or None
 PORT = int(os.getenv("PORT", "5000"))
+ACCOUNTS_FILE = BASE_DIR / os.getenv("ACCOUNTS_FILE", "accounts.toml")
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 
 # DM attachment types that carry a video URL: shared reels/posts, or a video sent directly.
@@ -53,44 +56,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("reel-bot")
 
 app = Flask(__name__)
-api = InstagramAPI(ACCESS_TOKEN, API_VERSION)
+accounts = AccountStore(ACCOUNTS_FILE, API_VERSION)
 jobs: "queue.Queue[Job]" = queue.Queue()
 media_files: dict[str, Path] = {}  # secret token -> video, served only while Instagram fetches it
-_account: dict[str, str | None] = {"id": IG_ACCOUNT_ID or None, "username": None}
 _seen_mids: "OrderedDict[str, None]" = OrderedDict()
 _seen_lock = threading.Lock()
 
 
 @dataclass
 class Job:
+    account: Account  # the account that received the DM; it replies and posts
     sender_id: str
     source_url: str | None  # None: the message had no reel, reply with help text
     caption: str = ""
 
 
 # ---------------------------------------------------------------- helpers
-
-def account_id() -> str:
-    """Our Instagram account ID: from IG_ACCOUNT_ID, the token, or the first incoming webhook."""
-    if not _account["id"]:
-        _account["id"] = api.find_account_id()
-    if not _account["id"]:
-        raise InstagramError("Instagram account ID unknown. Set IG_ACCOUNT_ID in .env, "
-                             "or DM the account once so the bot can learn it.")
-    if not _account["username"]:
-        try:
-            _account["username"] = api.username(_account["id"])
-        except InstagramError as e:
-            logger.warning("Could not read the account's username: %s", e)
-    return _account["id"]
-
-
-def learn_account_id(ig_id: str | None) -> None:
-    if ig_id and not _account["id"]:
-        _account["id"] = str(ig_id)
-        logger.info("Learned Instagram account ID %s from a webhook. "
-                    "Add IG_ACCOUNT_ID=%s to .env to keep it across restarts.", ig_id, ig_id)
-
 
 def signature_is_valid(raw_body: bytes, header: str) -> bool:
     if not header.startswith("sha256="):
@@ -110,20 +91,16 @@ def first_time_seen(mid: str) -> bool:
         return True
 
 
-def sender_allowed(sender_id: str) -> bool:
-    return "*" in ALLOWED_SENDER_IDS or sender_id in ALLOWED_SENDER_IDS
-
-
 def short(err: Exception, limit: int = 300) -> str:
     text = str(err)
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def reply(user_id: str, text: str) -> None:
+def reply(job: Job, text: str) -> None:
     try:
-        api.send_text(account_id(), user_id, text)
+        job.account.api.send_text(job.account.ig_id, job.sender_id, text)
     except InstagramError as e:
-        logger.warning("Could not reply to %s: %s", user_id, e)
+        logger.warning("[%s] Could not reply to %s: %s", job.account.name, job.sender_id, e)
 
 
 def build_caption(user_text: str, creator: str | None) -> str:
@@ -136,8 +113,10 @@ def build_caption(user_text: str, creator: str | None) -> str:
 def jobs_from_payload(payload: dict):
     if payload.get("object") != "instagram":
         return
+    known = accounts.get()
     for entry in payload.get("entry", []):
-        learn_account_id(entry.get("id"))  # entry.id is our own Instagram account ID
+        ig_id = str(entry.get("id") or "")  # the Instagram account that received the DM
+        account = known.get(ig_id)
         for event in entry.get("messaging", []):
             msg = event.get("message") or {}
             sender_id = (event.get("sender") or {}).get("id")
@@ -145,15 +124,24 @@ def jobs_from_payload(payload: dict):
                 continue  # read receipts, reactions, our own replies, deletions
             if msg.get("mid") and not first_time_seen(msg["mid"]):
                 continue
-            if not sender_allowed(sender_id):
-                logger.warning("Ignoring DM from sender %s (not in ALLOWED_SENDER_IDS). "
-                               "Add this ID to .env if they should be able to post.", sender_id)
+            if account is None:
+                logger.warning("DM to Instagram account %s, which is not in %s (sender %s). "
+                               "Add the account there to use it.", ig_id, ACCOUNTS_FILE.name, sender_id)
+                continue
+            if not account.enabled:
+                logger.info("[%s] Ignoring DM: account is disabled in %s.", account.name, ACCOUNTS_FILE.name)
+                continue
+            if not account.allows(sender_id):
+                # Sender IDs are per account: the same person has a different ID on each account.
+                logger.warning("Ignoring DM to [%s] from sender %s. To allow it, add the ID to "
+                               "allowed_senders for this account in %s.", account.name, sender_id,
+                               ACCOUNTS_FILE.name)
                 continue
 
             text = msg.get("text") or ""
             url = find_instagram_url(text)
             if url:
-                yield Job(sender_id, url, caption=text.replace(url, "").strip())
+                yield Job(account, sender_id, url, caption=text.replace(url, "").strip())
                 continue
             attachment = next((a for a in msg.get("attachments") or []
                                if a.get("type") in VIDEO_ATTACHMENT_TYPES
@@ -161,54 +149,56 @@ def jobs_from_payload(payload: dict):
             if attachment:
                 payload_url = attachment["payload"]["url"]
                 # A shared reel may arrive as an instagram.com link or as a direct video URL.
-                yield Job(sender_id, find_instagram_url(payload_url) or payload_url)
+                yield Job(account, sender_id, find_instagram_url(payload_url) or payload_url)
             else:
-                yield Job(sender_id, None)
+                yield Job(account, sender_id, None)
 
 
 # ---------------------------------------------------------------- worker
 
 def process(job: Job) -> None:
+    account = job.account
     if job.source_url is None:
-        reply(job.sender_id, HELP_TEXT)
+        reply(job, HELP_TEXT)
         return
 
-    logger.info("Downloading %s (requested by %s)", job.source_url, job.sender_id)
-    reply(job.sender_id, "Got it! Downloading the reel...")
+    logger.info("[%s] Downloading %s (requested by %s)", account.name, job.source_url, job.sender_id)
+    reply(job, "Got it! Downloading the reel...")
     try:
         video = download(job.source_url, DOWNLOAD_DIR, COOKIES_FILE)
     except DownloadError as e:
-        logger.warning("Download failed: %s", e)
-        reply(job.sender_id, f"Couldn't download that reel: {short(e)}\n\n"
-                             "If you shared it, try sending the link instead (Share > Copy link).")
+        logger.warning("[%s] Download failed: %s", account.name, e)
+        reply(job, f"Couldn't download that reel: {short(e)}\n\n"
+                   "If you shared it, try sending the link instead (Share > Copy link).")
         return
 
     caption = build_caption(job.caption, video.username)
-    logger.info("Downloaded %s", video.path)
-    if DRY_RUN:
-        logger.info("DRY_RUN is on, not publishing. Caption would be: %r", caption)
-        reply(job.sender_id, f"Downloaded {video.path.name}. Dry run is on, so it was not posted.")
+    logger.info("[%s] Downloaded %s", account.name, video.path)
+    dry_run = DRY_RUN if account.dry_run is None else account.dry_run
+    if dry_run:
+        logger.info("[%s] Dry run, not publishing. Caption would be: %r", account.name, caption)
+        reply(job, f"Downloaded {video.path.name}. Dry run is on, so it was not posted.")
         return
     if not PUBLIC_URL:
         logger.error("PUBLIC_URL is not set; Instagram needs it to fetch the video.")
-        reply(job.sender_id, "Downloaded, but the bot isn't configured to publish yet (PUBLIC_URL missing).")
+        reply(job, "Downloaded, but the bot isn't configured to publish yet (PUBLIC_URL missing).")
         return
 
-    reply(job.sender_id, "Downloaded. Uploading to Instagram, this can take a minute...")
+    reply(job, "Downloaded. Uploading to Instagram, this can take a minute...")
     token = secrets.token_urlsafe(24)
     media_files[token] = video.path
     try:
-        media_id, permalink = api.publish_reel(account_id(), f"{PUBLIC_URL}/media/{token}.mp4", caption)
+        media_id, permalink = account.api.publish_reel(account.ig_id, f"{PUBLIC_URL}/media/{token}.mp4", caption)
     except InstagramError as e:
-        logger.error("Publishing failed: %s", e)
-        reply(job.sender_id, f"Downloaded, but publishing failed: {short(e)}")
+        logger.error("[%s] Publishing failed: %s", account.name, e)
+        reply(job, f"Downloaded, but publishing failed: {short(e)}")
         return
     finally:
         media_files.pop(token, None)
 
-    logger.info("Published reel %s %s", media_id, permalink or "")
+    logger.info("[%s] Published reel %s %s", account.name, media_id, permalink or "")
     video.path.unlink(missing_ok=True)
-    reply(job.sender_id, f"Posted! {permalink}" if permalink else "Posted!")
+    reply(job, f"Posted! {permalink}" if permalink else "Posted!")
 
 
 def worker() -> None:
@@ -226,7 +216,8 @@ def worker() -> None:
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify(status="ok", account=_account["username"], dry_run=DRY_RUN, queued=jobs.qsize())
+    active = sum(1 for a in accounts.get().values() if a.enabled)
+    return jsonify(status="ok", accounts=active, dry_run=DRY_RUN, queued=jobs.qsize())
 
 
 @app.route("/webhook", methods=["GET"])
@@ -268,27 +259,26 @@ def serve_media(token: str):
 
 # ---------------------------------------------------------------- startup
 
-def startup_checks() -> None:
-    if not ACCESS_TOKEN:
-        logger.error("ACCESS_TOKEN is missing from .env.")
-    else:
-        logger.info("Using %s.", api.base.rsplit("/", 1)[0])
+def startup_checks(known: dict[str, Account]) -> None:
+    for account in known.values():
+        if not account.enabled:
+            logger.info("[%s] Disabled.", account.name)
+            continue
         try:
-            ig_id = account_id()
-            logger.info("Connected to Instagram as @%s (account id %s).", _account["username"], ig_id)
-            limit = api.publishing_limit(ig_id)
-            logger.info("Publishing permission OK (%s of %s posts used in the last 24h).",
-                        limit.get("quota_usage", "?"), (limit.get("config") or {}).get("quota_total", "?"))
+            username = account.api.username(account.ig_id)
+            limit = account.api.publishing_limit(account.ig_id)
+            dry_run = DRY_RUN if account.dry_run is None else account.dry_run
+            logger.info("[%s] OK: @%s (%s), can publish (%s of %s posts used in 24h)%s.",
+                        account.name, username, account.ig_id, limit.get("quota_usage", "?"),
+                        (limit.get("config") or {}).get("quota_total", "?"), ", DRY RUN" if dry_run else "")
         except InstagramError as e:
-            logger.error("Instagram setup problem: %s", e)
+            logger.error("[%s] Its access_token can't use account %s: %s", account.name, account.ig_id, e)
+        if not account.allowed_senders:
+            logger.warning("[%s] allowed_senders is empty, so its DMs are ignored. DM the account; "
+                           "the log shows the sender ID to add.", account.name)
+        elif "*" in account.allowed_senders:
+            logger.warning("[%s] allowed_senders is [\"*\"]: ANYONE can get reels posted.", account.name)
 
-    if not ALLOWED_SENDER_IDS:
-        logger.warning("ALLOWED_SENDER_IDS is empty, so every DM will be ignored. "
-                       "DM the account once; the log will show your sender ID to add.")
-    elif "*" in ALLOWED_SENDER_IDS:
-        logger.warning("ALLOWED_SENDER_IDS=* : ANYONE who DMs a reel link can get it posted.")
-    if DRY_RUN:
-        logger.warning("DRY_RUN is on: reels are downloaded but NOT published.")
     if not APP_SECRET:
         logger.warning("APP_SECRET is not set: webhook signatures are not verified.")
     if not PUBLIC_URL:
@@ -313,8 +303,13 @@ def check_public_url() -> None:
 
 
 if __name__ == "__main__":
+    try:
+        known_accounts = accounts.get()
+    except ConfigError as e:
+        logger.error("%s", e)
+        sys.exit(1)
     threading.Thread(target=worker, daemon=True, name="reel-worker").start()
-    startup_checks()
+    startup_checks(known_accounts)
     try:
         from waitress import serve
     except ImportError:

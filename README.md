@@ -25,7 +25,7 @@ docker-compose.yml          runs the bot in Docker (see "Running in Docker")
 
 | File | What goes in it | In git? |
 |---|---|---|
-| `.env` | Server settings: `PUBLIC_URL`, `APP_SECRET`, `VERIFY_TOKEN`, `DRY_RUN`, `PORT` | No (template: `.env.example`) |
+| `.env` | Server settings: `PUBLIC_URL`, `APP_SECRET`, `VERIFY_TOKEN`, `DRY_RUN`, `PORT`, `DOWNLOAD_DIR` | No (template: `.env.example`) |
 | `accounts.toml` | One block per Instagram account: ID, token, allowed senders | No (template: `accounts.example.toml`) |
 
 ```toml
@@ -72,7 +72,9 @@ docker compose down              # stop
   public address behind `PUBLIC_URL` should forward to the host's `PORT`, as without Docker.
 - `accounts.toml` is mounted read-only, so edits on the host still apply without a restart.
   `.env` is read at start: run `docker compose up -d` again after changing it.
-- Kept videos (dry runs, failed posts) appear in `./downloads` on the host.
+- Kept videos (dry runs, failed posts) go to the host folder set by `DOWNLOAD_DIR` in `.env`.
+  Create it before starting: Docker won't start without it. On Linux the bot runs as uid 1000,
+  so the folder must be writable by that uid: check `id -u`, or `sudo chown 1000:1000 <folder>`.
 - The image includes ffmpeg, so yt-dlp merges the best video and audio streams.
 - Instagram changes often break yt-dlp. If downloads start failing, rebuild to get the latest
   version: `docker compose build --pull --no-cache && docker compose up -d`.

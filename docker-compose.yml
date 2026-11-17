@@ -11,6 +11,8 @@ services:
     restart: unless-stopped
     init: true  # passes docker stop / Ctrl+C on to the bot so it stops right away
     env_file: .env
+    environment:
+      DOWNLOAD_DIR: /app/downloads  # inside the container only; the host folder from .env is mounted here
     ports:
       - "${PORT:-5000}:${PORT:-5000}"  # PUBLIC_URL must forward to this port on the host
     volumes:
@@ -22,7 +24,13 @@ services:
         read_only: true
         bind:
           create_host_path: false  # fail clearly if accounts.toml is missing
-      # Videos the bot keeps (dry runs, failed posts) appear in ./downloads on the host.
-      - ./downloads:/app/downloads
+      # Videos the bot keeps (dry runs, failed posts) go to the host folder DOWNLOAD_DIR in .env.
+      # Create it before starting. On Linux it must be writable by uid 1000, the user the bot
+      # runs as: check `id -u`, or run `sudo chown 1000:1000 <folder>`.
+      - type: bind
+        source: ${DOWNLOAD_DIR:?Set DOWNLOAD_DIR in .env to the host folder for downloaded videos}
+        target: /app/downloads
+        bind:
+          create_host_path: false  # Docker would create it owned by root, and the bot couldn't write
       # If you set INSTAGRAM_COOKIES_FILE=cookies.txt in .env, uncomment:
       # - ./cookies.txt:/app/cookies.txt:ro

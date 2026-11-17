@@ -32,10 +32,15 @@ class Settings:
             port=int(_env("PORT", "5000")),
             graph_api_version=_env("GRAPH_API_VERSION", "v27.0"),
             cookies_file=_env("INSTAGRAM_COOKIES_FILE") or None,
-            accounts_file=project_dir / _env("ACCOUNTS_FILE", "accounts.toml"),
-            download_dir=project_dir / "downloads",
+            accounts_file=_path(project_dir, _env("ACCOUNTS_FILE", "accounts.toml")),
+            download_dir=_path(project_dir, _env("DOWNLOAD_DIR") or "downloads"),
         )
 
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def _path(project_dir: Path, value: str) -> Path:
+    """value as a path; relative paths are relative to the project folder."""
+    return project_dir / Path(value).expanduser()

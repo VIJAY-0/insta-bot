@@ -73,8 +73,8 @@ docker compose down              # stop
 - `accounts.toml` is mounted read-only, so edits on the host still apply without a restart.
   `.env` is read at start: run `docker compose up -d` again after changing it.
 - Kept videos (dry runs, failed posts) go to the host folder set by `DOWNLOAD_DIR` in `.env`.
-  Create it before starting: Docker won't start without it. On Linux the bot runs as uid 1000,
-  so the folder must be writable by that uid: check `id -u`, or `sudo chown 1000:1000 <folder>`.
+  Create it before starting: Docker won't start without it. The bot runs as uid 1000, and the
+  container makes the folder writable for it on start, so on Linux it ends up owned by uid 1000.
 - The image includes ffmpeg, so yt-dlp merges the best video and audio streams.
 - Instagram changes often break yt-dlp. If downloads start failing, rebuild to get the latest
   version: `docker compose build --pull --no-cache && docker compose up -d`.

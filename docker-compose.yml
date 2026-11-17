@@ -25,12 +25,11 @@ services:
         bind:
           create_host_path: false  # fail clearly if accounts.toml is missing
       # Videos the bot keeps (dry runs, failed posts) go to the host folder DOWNLOAD_DIR in .env.
-      # Create it before starting. On Linux it must be writable by uid 1000, the user the bot
-      # runs as: check `id -u`, or run `sudo chown 1000:1000 <folder>`.
+      # Create it before starting. On start, the container makes it writable for the bot (uid 1000).
       - type: bind
         source: ${DOWNLOAD_DIR:?Set DOWNLOAD_DIR in .env to the host folder for downloaded videos}
         target: /app/downloads
         bind:
-          create_host_path: false  # Docker would create it owned by root, and the bot couldn't write
+          create_host_path: false  # a mistyped path fails instead of creating a new folder
       # If you set INSTAGRAM_COOKIES_FILE=cookies.txt in .env, uncomment:
       # - ./cookies.txt:/app/cookies.txt:ro

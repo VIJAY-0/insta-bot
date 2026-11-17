@@ -1,0 +1,13 @@
+# Keep secrets and local data out of the build context; they are mounted at runtime instead.
+.env
+.env.*
+accounts.toml
+cookies.txt
+downloads/
+
+.git/
+__pycache__/
+*.pyc
+.venv/
+venv/
+tests/

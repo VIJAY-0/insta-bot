@@ -17,6 +17,8 @@ reelbot/                    the bot (run: python -m reelbot)
 tests/                      unit tests (run: python -m unittest)
 insta_reel_downloader.py    standalone CLI, not needed by the bot:
                             python insta_reel_downloader.py "<reel link>"
+Dockerfile                  image: Python 3.12 + ffmpeg, runs as a non-root user
+docker-compose.yml          runs the bot in Docker (see "Running in Docker")
 ```
 
 ## Configuration
@@ -54,6 +56,27 @@ The bot reloads `accounts.toml` when you save it. Changes to `.env` need a resta
      **Allow access to messages**.
    - In Development mode Meta only delivers DMs from accounts with a role on the app.
 5. **Run:** `python -m reelbot` (or double-click `run_bot.bat`). The startup log checks every account.
+   Or run it in Docker instead, see below.
+
+## Running in Docker
+
+With `.env` and `accounts.toml` in place (steps 2–4 above), you don't need Python installed:
+
+```
+docker compose up -d --build     # build and start in the background
+docker compose logs -f           # follow the log (startup checks, sender IDs)
+docker compose down              # stop
+```
+
+- The container listens on `PORT` from `.env` and publishes that port on the host, so the
+  public address behind `PUBLIC_URL` should forward to the host's `PORT`, as without Docker.
+- `accounts.toml` is mounted read-only, so edits on the host still apply without a restart.
+  `.env` is read at start: run `docker compose up -d` again after changing it.
+- Kept videos (dry runs, failed posts) appear in `./downloads` on the host.
+- The image includes ffmpeg, so yt-dlp merges the best video and audio streams.
+- Instagram changes often break yt-dlp. If downloads start failing, rebuild to get the latest
+  version: `docker compose build --pull --no-cache && docker compose up -d`.
+- Don't run the Docker container and `python -m reelbot` at the same time: both need `PORT`.
 
 ## Adding an account or a sender
 

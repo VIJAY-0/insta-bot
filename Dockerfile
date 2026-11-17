@@ -15,13 +15,15 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY reelbot ./reelbot
+COPY docker-entrypoint.sh /usr/local/bin/
 
 RUN useradd --create-home --uid 1000 app && mkdir downloads && chown app downloads
-USER app
 
 # Settings come from the environment (docker compose passes .env); accounts.toml and
 # downloads/ are mounted from the host. See docker-compose.yml.
 EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
   CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/' % os.getenv('PORT', '5000'), timeout=4)"
+# Starts as root, makes the mounted downloads folder writable, then runs CMD as "app".
+ENTRYPOINT ["sh", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "reelbot"]

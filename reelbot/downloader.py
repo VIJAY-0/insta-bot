@@ -1,4 +1,7 @@
-"""Download a reel given an Instagram link, or a video given a direct media URL."""
+"""Download a reel from an Instagram link, or a video from a direct media URL.
+
+Also used by the standalone command-line downloader (insta_reel_downloader.py).
+"""
 
 import re
 import shutil
@@ -28,6 +31,16 @@ class Video:
     username: str | None = None  # original creator, used for the credit line
 
 
+def find_instagram_url(text: str) -> str | None:
+    """The first Instagram reel/post link in text, if any."""
+    match = INSTAGRAM_URL.search(text or "")
+    return match.group(0) if match else None
+
+
+def is_instagram_url(url: str) -> bool:
+    return INSTAGRAM_URL.match(url) is not None
+
+
 class _SilentLogger:
     """Keeps yt-dlp quiet; failures still raise and are reported by the caller."""
 
@@ -37,25 +50,14 @@ class _SilentLogger:
     info = warning = error = debug
 
 
-def find_instagram_url(text: str) -> str | None:
-    match = INSTAGRAM_URL.search(text or "")
-    return match.group(0) if match else None
-
-
-def download(url: str, out_dir: Path, cookies_file: str | None = None) -> Video:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if INSTAGRAM_URL.match(url):
-        return _download_with_ytdlp(url, out_dir, cookies_file)
-    return _download_direct(url, out_dir)
-
-
-def _download_with_ytdlp(url: str, out_dir: Path, cookies_file: str | None) -> Video:
+def ytdlp_options(output_template: str | Path, cookies_file: str | Path | None = None,
+                  cookies_from_browser: str | None = None) -> dict:
+    """yt-dlp options shared by the bot and the command-line downloader."""
     opts = {
-        "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+        "outtmpl": str(output_template),
         # With ffmpeg: merge best video + audio. Without: best single file that has both.
         "format": "bv*+ba/b" if shutil.which("ffmpeg") else "b",
         "merge_output_format": "mp4",
-        "playlist_items": "1",  # carousel posts: take the first item
         "logger": _SilentLogger(),
         "quiet": True,
         "no_warnings": True,
@@ -63,7 +65,23 @@ def _download_with_ytdlp(url: str, out_dir: Path, cookies_file: str | None) -> V
         "retries": 3,
     }
     if cookies_file:
-        opts["cookiefile"] = cookies_file
+        opts["cookiefile"] = str(cookies_file)
+    if cookies_from_browser:
+        opts["cookiesfrombrowser"] = (cookies_from_browser.lower(),)
+    return opts
+
+
+def download(url: str, out_dir: Path, cookies_file: str | None = None) -> Video:
+    """Save the video at url into out_dir. Raises DownloadError with a user-presentable message."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if is_instagram_url(url):
+        return _download_with_ytdlp(url, out_dir, cookies_file)
+    return _download_direct(url, out_dir)
+
+
+def _download_with_ytdlp(url: str, out_dir: Path, cookies_file: str | None) -> Video:
+    opts = ytdlp_options(out_dir / "%(id)s.%(ext)s", cookies_file)
+    opts["playlist_items"] = "1"  # carousel posts: take the first item
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)

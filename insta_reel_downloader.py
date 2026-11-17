@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download Instagram Reels (and video posts) from their URLs.
+"""Download Instagram Reels (and video posts) from their URLs. The bot doesn't need this.
 
 Usage:
     python insta_reel_downloader.py https://www.instagram.com/reel/XXXXXXXXXXX/
@@ -12,33 +12,17 @@ Only download content you own or have permission to save.
 """
 
 import argparse
-import re
-import shutil
 import sys
 from pathlib import Path
 
 try:
     import yt_dlp
-except ImportError:
-    sys.exit("yt-dlp is not installed. Run:  pip install -r requirements.txt")
 
-# Matches /reel/, /reels/, /p/ and /tv/ links, including the newer
-# instagram.com/<username>/reel/<id>/ form and links with ?igsh=... tracking params.
-INSTAGRAM_URL = re.compile(
-    r"^https?://(?:www\.|m\.)?instagram\.com/(?:[\w.]+/)?(?:reels?|p|tv)/[\w-]+",
-    re.IGNORECASE,
-)
+    from reelbot.downloader import is_instagram_url, ytdlp_options
+except ImportError as e:
+    sys.exit(f"{e}. Run:  pip install -r requirements.txt")
 
 LOGIN_HINTS = ("login", "log in", "cookies", "rate-limit", "rate limit", "private", "not available")
-
-
-class SilentLogger:
-    """Keeps yt-dlp quiet; errors are still raised and reported by main()."""
-
-    def debug(self, msg: str) -> None: pass
-    def info(self, msg: str) -> None: pass
-    def warning(self, msg: str) -> None: pass
-    def error(self, msg: str) -> None: pass
 
 
 def progress_hook(d: dict) -> None:
@@ -54,26 +38,11 @@ def progress_hook(d: dict) -> None:
         print("\r  Download finished." + " " * 30)
 
 
-def build_options(output_dir: Path, args: argparse.Namespace, saved: list) -> dict:
-    has_ffmpeg = shutil.which("ffmpeg") is not None
-    opts = {
-        "outtmpl": str(output_dir / "%(uploader|instagram)s_%(id)s.%(ext)s"),
-        # With ffmpeg: merge the best video and audio streams.
-        # Without it: take the best single file that already has both.
-        "format": "bv*+ba/b" if has_ffmpeg else "b",
-        "merge_output_format": "mp4",
-        "logger": SilentLogger(),
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "retries": 3,
-        "progress_hooks": [progress_hook],
-        "post_hooks": [saved.append],  # receives the final file path
-    }
-    if args.cookies:
-        opts["cookiefile"] = str(args.cookies)
-    if args.cookies_from_browser:
-        opts["cookiesfrombrowser"] = (args.cookies_from_browser.lower(),)
+def build_options(args: argparse.Namespace, saved: list[str]) -> dict:
+    opts = ytdlp_options(args.output / "%(uploader|instagram)s_%(id)s.%(ext)s",
+                         cookies_file=args.cookies, cookies_from_browser=args.cookies_from_browser)
+    opts["progress_hooks"] = [progress_hook]
+    opts["post_hooks"] = [saved.append]  # receives the final file path
     return opts
 
 
@@ -91,7 +60,7 @@ def collect_urls(args: argparse.Namespace) -> list[str]:
     return urls
 
 
-def main() -> int:
+def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser = argparse.ArgumentParser(description="Download Instagram Reels from their URLs.")
     parser.add_argument("urls", nargs="*", help="one or more Instagram reel/post URLs")
     parser.add_argument("-f", "--file", type=Path, help="text file with one URL per line")
@@ -101,15 +70,18 @@ def main() -> int:
                         help="Netscape-format cookies.txt exported from a browser logged in to Instagram")
     parser.add_argument("--cookies-from-browser", metavar="BROWSER",
                         help="use Instagram login cookies from a browser: firefox, chrome, edge, brave, ...")
-    args = parser.parse_args()
+    return parser, parser.parse_args()
 
+
+def main() -> int:
+    parser, args = parse_args()
     urls = collect_urls(args)
     if not urls:
         parser.error("no URL given")
 
     valid = []
     for url in urls:
-        if INSTAGRAM_URL.match(url):
+        if is_instagram_url(url):
             valid.append(url)
         else:
             print(f"Skipping (not an Instagram reel/post URL): {url}")
@@ -120,7 +92,7 @@ def main() -> int:
     saved: list[str] = []
     failed: list[str] = []
 
-    with yt_dlp.YoutubeDL(build_options(args.output, args, saved)) as ydl:
+    with yt_dlp.YoutubeDL(build_options(args, saved)) as ydl:
         for i, url in enumerate(valid, 1):
             print(f"[{i}/{len(valid)}] {url}")
             try:

@@ -3,12 +3,21 @@
 DM one of your Instagram accounts a reel link (or share a reel to it). The bot downloads the
 video, publishes it as a Reel on **the account that received the DM**, and replies with the link.
 
-- `app.py` – webhook server, job queue, publishing flow (original prototype kept as `app_prototype.py`)
-- `accounts.py` – loads and validates `accounts.toml`, reloads it when it changes
-- `downloader.py` – downloads reels with yt-dlp, or shared videos by direct URL
-- `instagram_api.py` – Graph API calls (send DM, create container, wait, publish)
-- `insta_reel_downloader.py` – standalone command-line downloader, not needed by the bot:
-  `python insta_reel_downloader.py "<reel link>"`
+```
+reelbot/                    the bot (run: python -m reelbot)
+  __main__.py               entry point: load config, start the worker, serve HTTP
+  config.py                 server settings from .env
+  accounts.py               loads and validates accounts.toml, reloads it when it changes
+  server.py                 HTTP routes: health, Meta webhook, temporary /media/ URLs
+  messages.py               webhook payload -> jobs (routing, allowed senders, dedupe)
+  bot.py                    job queue and worker: download -> publish -> reply
+  downloader.py             downloads reels with yt-dlp, or shared videos by direct URL
+  instagram.py              Graph API client (send DM, create container, wait, publish)
+  checks.py                 startup checks for each account and PUBLIC_URL
+tests/                      unit tests (run: python -m unittest)
+insta_reel_downloader.py    standalone CLI, not needed by the bot:
+                            python insta_reel_downloader.py "<reel link>"
+```
 
 ## Configuration
 
@@ -44,7 +53,7 @@ The bot reloads `accounts.toml` when you save it. Changes to `.env` need a resta
    - On each Instagram account: Settings → Messages and story replies → Message controls →
      **Allow access to messages**.
    - In Development mode Meta only delivers DMs from accounts with a role on the app.
-5. **Run:** `python app.py` (or double-click `run_bot.bat`). The startup log checks every account.
+5. **Run:** `python -m reelbot` (or double-click `run_bot.bat`). The startup log checks every account.
 
 ## Adding an account or a sender
 

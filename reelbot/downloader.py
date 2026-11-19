@@ -28,7 +28,8 @@ class DownloadError(Exception):
 @dataclass
 class Video:
     path: Path
-    username: str | None = None  # original creator, used for the credit line
+    username: str | None = None  # original creator
+    description: str | None = None  # the original post's caption
 
 
 def find_instagram_url(text: str) -> str | None:
@@ -94,7 +95,7 @@ def _download_with_ytdlp(url: str, out_dir: Path, cookies_file: str | None) -> V
     path = Path(downloads[0]["filepath"]) if downloads else None
     if path is None or not path.exists() or path.suffix.lower() not in VIDEO_SUFFIXES:
         raise DownloadError("That post doesn't contain a downloadable video.")
-    return Video(path=path, username=info.get("channel"))
+    return Video(path=path, username=info.get("channel"), description=info.get("description"))
 
 
 def _download_direct(url: str, out_dir: Path) -> Video:

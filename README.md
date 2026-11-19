@@ -91,8 +91,9 @@ docker compose down              # stop
 
 ## Using it
 
-- Send a reel link → it's posted with a credit line, e.g. `🎥 @originalcreator`.
-- Text in the same message as the link becomes the caption:
+- Send a reel link → it's posted with the original reel's caption copied over. If the reel has
+  no caption, a random GTA caption is used. There is no credit line.
+- Text in the same message as the link overrides that and becomes the caption:
   `Monday mood https://www.instagram.com/reel/...`
 - Sharing a reel with the Share button also works. If a shared reel fails, send its link instead.
 

@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest import mock
 
 from reelbot.accounts import AccountStore
-from reelbot.bot import CAPTION_LIMIT, HELP_TEXT, ReelBot, build_caption
+from reelbot.bot import HELP_TEXT, ReelBot
+from reelbot.captions import CAPTION_LIMIT, GTA_CAPTIONS, pick_caption
 from reelbot.config import Settings
 from reelbot.downloader import DownloadError, Video
 from reelbot.instagram import InstagramError
@@ -22,7 +23,7 @@ class ProcessTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
-        self.video = Video(self.dir / "ABC.mp4", username="creator")
+        self.video = Video(self.dir / "ABC.mp4", username="creator", description="Original caption")
         self.video.path.write_bytes(b"video")
 
     def run_job(self, account=None, source_url="https://www.instagram.com/reel/ABC/", caption="",
@@ -49,7 +50,7 @@ class ProcessTest(unittest.TestCase):
 
         [(video_url, caption)] = api.published
         self.assertTrue(video_url.startswith(f"{PUBLIC_URL}/media/") and video_url.endswith(".mp4"))
-        self.assertEqual(caption, "Monday mood\n\n🎥 @creator")
+        self.assertEqual(caption, "Monday mood")
         self.assertEqual(served, [self.video.path])  # reachable while Instagram fetches it...
         self.assertEqual(self.bot.media._files, {})  # ...and not afterwards
         self.assertFalse(self.video.path.exists())
@@ -78,11 +79,19 @@ class ProcessTest(unittest.TestCase):
         self.assertIn("publishing failed: quota reached", api.sent[-1])
 
 
-class BuildCaptionTest(unittest.TestCase):
-    def test_parts(self):
-        self.assertEqual(build_caption("", None), "")
-        self.assertEqual(build_caption("hi", None), "hi")
-        self.assertEqual(build_caption("", "creator"), "🎥 @creator")
+class PickCaptionTest(unittest.TestCase):
+    def test_prefers_the_senders_text_then_the_original_caption(self):
+        self.assertEqual(pick_caption(" hi ", "Original"), "hi")
+        self.assertEqual(pick_caption("", "Original\n#tag"), "Original\n#tag")
+        self.assertEqual(pick_caption("  ", "Original"), "Original")
+
+    def test_falls_back_to_a_random_gta_caption(self):
+        for original in (None, "", "  \n"):
+            self.assertIn(pick_caption("", original), GTA_CAPTIONS)
+
+    def test_never_credits_the_creator(self):
+        for caption in GTA_CAPTIONS:
+            self.assertNotIn("@", caption)
 
     def test_truncates_to_instagram_limit(self):
-        self.assertEqual(len(build_caption("x" * 3000, "creator")), CAPTION_LIMIT)
+        self.assertEqual(len(pick_caption("x" * 3000, None)), CAPTION_LIMIT)

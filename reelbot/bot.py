@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .accounts import AccountStore
+from .captions import pick_caption
 from .config import Settings
 from .downloader import DownloadError, Video, download
 from .instagram import InstagramError
@@ -17,7 +18,6 @@ from .messages import Job, SeenMessages, iter_jobs
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = "Send me an Instagram reel link (or share a reel here) and I'll post it."
-CAPTION_LIMIT = 2200  # Instagram's caption limit, in characters
 
 
 class MediaHost:
@@ -86,7 +86,7 @@ class ReelBot:
             return
         logger.info("[%s] Downloaded %s", account.name, video.path)
 
-        caption = build_caption(job.caption, video.username)
+        caption = pick_caption(job.caption, video.description)
         if account.dry_run:
             logger.info("[%s] Dry run, not publishing. Caption would be: %r", account.name, caption)
             _reply(job, f"Downloaded {video.path.name}. Dry run is on, so it was not posted.")
@@ -112,14 +112,6 @@ class ReelBot:
         logger.info("[%s] Published reel %s %s", account.name, media_id, permalink or "")
         video.path.unlink(missing_ok=True)
         _reply(job, f"Posted! {permalink}" if permalink else "Posted!")
-
-
-def build_caption(user_text: str, creator: str | None) -> str:
-    """The sender's text, then a credit line for the original creator."""
-    parts = [user_text] if user_text else []
-    if creator:
-        parts.append(f"🎥 @{creator}")
-    return "\n\n".join(parts)[:CAPTION_LIMIT]
 
 
 def _reply(job: Job, text: str) -> None:
